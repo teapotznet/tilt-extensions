@@ -1,11 +1,14 @@
 #!/usr/bin/env python
+RESTART_FILE = '/tmp/.restart-proc'
+
 
 def kubectl_build(ref, context, build_args={}, dockerfile=None,
                   dockerfile_contents=None, live_update=[],
                   match_in_env_vars=False, ignore=[],
                   entrypoint=[], target='', ssh='', secret='',
                   extra_tag='', cache_from=[], pull=False,
-                  registry_secret=None):
+                  registry_secret=None,
+                  namespace=None, push=False):
     # incompatible parameters with docker_build:
     # only
     # container_args
@@ -13,8 +16,8 @@ def kubectl_build(ref, context, build_args={}, dockerfile=None,
     if not kubectl_build_enable():
         # just run the standard docker_build
         docker_build(ref=ref, context=context, build_args=build_args, dockerfile=dockerfile, live_update=live_update,
-                  match_in_env_vars=match_in_env_vars, ignore=ignore, entrypoint=entrypoint, target=target, ssh=ssh,
-                  secret=secret, extra_tag=extra_tag, cache_from=cache_from, pull=pull)
+                     match_in_env_vars=match_in_env_vars, ignore=ignore, entrypoint=entrypoint, target=target, ssh=ssh,
+                     secret=secret, extra_tag=extra_tag, cache_from=cache_from, pull=pull)
         return
     pre_command = ""
 
@@ -47,6 +50,10 @@ def kubectl_build(ref, context, build_args={}, dockerfile=None,
                 command += ['-t', t]
     if pull:
         command += ['--pull']
+    if push:
+        command += ['--push']
+    if namespace:
+        command += ['--namespace', namespace]
     for c in cache_from:
         command += ['--cache-from', c]
     if ssh:
@@ -62,13 +69,19 @@ def kubectl_build(ref, context, build_args={}, dockerfile=None,
             for s in secret:
                 command += ['--secret', s]
     command = [shlex.quote(c) for c in command]
-    command += ['-t', '$EXPECTED_REF']
+    if os.name == 'nt':
+        command += ['-t', '%EXPECTED_REF%']
+    else:
+        command += ['-t', '$EXPECTED_REF']
     command += [shlex.quote(context)]
     command = pre_command + ' '.join(command)
 
     deps = [context]
     if dockerfile_path != '-':
         deps.append(dockerfile_path)
+
+    live_update = live_update + \
+        [run('date > {}'.format(RESTART_FILE), trigger=[])]
 
     custom_build(ref, command, deps, disable_push=True, skips_local_docker=True, live_update=live_update,
                  match_in_env_vars=match_in_env_vars, ignore=ignore, entrypoint=entrypoint)
@@ -87,6 +100,7 @@ def kubectl_build_enable(v=None):
     else:
         return to_bool(os.environ.get('KUBECTL_BUILD_ENABLE', 'on'))
 
+
 def kubectl_build_registry_secret(v=None):
     """Set/Get kubectl build registry secret"""
     if v != None:
@@ -94,6 +108,7 @@ def kubectl_build_registry_secret(v=None):
         return str(v)
     else:
         return os.environ.get('KUBECTL_BUILD_REGISTRY_SECRET', 'docker-registry')
+
 
 def to_bool(value):
     """Convert a string to a boolean"""
